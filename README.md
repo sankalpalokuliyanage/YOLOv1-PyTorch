@@ -1,10 +1,10 @@
-#YOLOv1 Implementation from Scratch with PyTorch
+# YOLOv1 Implementation from Scratch with PyTorch
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-ee4c2c.svg)](https://pytorch.org/)
 
 A modern, high-performance implementation of the original YOLO (You Only Look Once) real-time object detection algorithm, optimized for NVIDIA GPUs using Automatic Mixed Precision (AMP).
 
-##🚀 Features
+## 🚀 Features
 * **From-Scratch Implementation: Built based on the original 2016 research paper.
 * **Modern PyTorch Syntax: Uses the latest torch.amp for high-speed training.
 * **Hardware Optimized: Specifically tuned for high VRAM GPUs (RTX 4500) and large memory systems (256GB RAM).
@@ -13,7 +13,7 @@ A modern, high-performance implementation of the original YOLO (You Only Look On
 * **Automated Pipeline: Automatic PASCAL VOC dataset downloading and formatting.
 
 
-##🛠 Hardware Environment
+## 🛠 Hardware Environment
 * **This implementation was developed and tested on a high-performance research workstation at Kyungpook National University:
 * **GPU: NVIDIA RTX 4500 (Used with torch.amp for Tensor Core acceleration)
 * **RAM: 256GB System Memory
@@ -21,7 +21,7 @@ A modern, high-performance implementation of the original YOLO (You Only Look On
 
 ---
 
-##📁 Project Structure
+## 📁 Project Structure
 .
 ├── model.py           # YOLOv1 Architecture (24 Conv layers + 2 FC layers)
 ├── loss.py            # Multi-part YOLO Loss Function
@@ -29,7 +29,7 @@ A modern, high-performance implementation of the original YOLO (You Only Look On
 ├── dataset.py         # VOC Dataset loading and SxSx(B*5+C) encoding
 └── yolov1_epoch_10.pth # Saved model checkpoints (ignored by git)
 
-##⚙️ Hyperparameters
+## ⚙️ Hyperparameters
 Based on the research paper and hardware optimization:
 * **| Parameter | Value | Description |
 * **| :--- | :--- | :--- |
@@ -39,7 +39,7 @@ Based on the research paper and hardware optimization:
 * **| Optimizer | SGD | Momentum 0.9, Weight Decay 0.0005 |
 * **| Image Size | 448 x 448 | Standard YOLO resolution |
 
-##📦 Installation & Usage
+## 📦 Installation & Usage
 Clone the repository:
 ```bash
 git clone https://github.com/sankalpalokuliyanage/YOLOv1-PyTorch.git
@@ -56,11 +56,11 @@ Start Training:
 python train.py
 ```
 
-##📊 Training Progress
+## 📊 Training Progress
 Training is currently ongoing. Initial results show stable loss convergence:
 * **Epoch 1: Avg Loss ~700
 * **Epoch 3: Avg Loss ~649 (Current progress)
 
-📝 Acknowledgments
+## 📝 Acknowledgments
 * **Redmon et al. for the original YOLO paper.
 * **Kyungpook National University (KNU) for providing the computational resources.
