@@ -8,7 +8,7 @@ from model import YOLOv1
 from loss import YoloLoss
 
 # Hyperparameters
-LEARNING_RATE = 2e-5 
+LEARNING_RATE = 1e-6 # Fine-tuning learning rate as requested
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH_SIZE = 64 
 WEIGHT_DECAY = 0.0005 
@@ -16,7 +16,7 @@ EPOCHS = 135
 S = 7 
 B = 2 
 C = 20 
-NUM_WORKERS = 16 
+NUM_WORKERS = 20 
 PIN_MEMORY = True 
 
 # Image transformations
@@ -55,7 +55,7 @@ def train_fn(train_loader, model, optimizer, loss_fn, scaler):
     for batch_idx, (x, y) in enumerate(train_loader):
         x, y = x.to(DEVICE), y.to(DEVICE)
 
-        # Updated Autocast Syntax to avoid FutureWarning
+        # Using modern torch.amp.autocast
         with torch.amp.autocast('cuda'):
             predictions = model(x)
             loss = loss_fn(predictions, y)
@@ -76,15 +76,19 @@ def train_fn(train_loader, model, optimizer, loss_fn, scaler):
         if batch_idx % 10 == 0:
             print(f"Batch {batch_idx}/{len(train_loader)}, Loss: {loss.item():.4f}")
 
-    print(f"Epoch finished. Average Loss: {total_loss/len(train_loader):.4f}")
+    avg_loss = total_loss / len(train_loader)
+    print(f"Epoch finished. Average Loss: {avg_loss:.4f}")
+    return avg_loss
 
 def main():
     model = YOLOv1(split_size=S, num_boxes=B, num_classes=C).to(DEVICE)
     optimizer = optim.SGD(model.parameters(), lr=LEARNING_RATE, momentum=0.9, weight_decay=WEIGHT_DECAY)
     loss_fn = YoloLoss()
     
-    # Updated GradScaler Syntax to avoid FutureWarning
+    # Using modern torch.amp.GradScaler
     scaler = torch.amp.GradScaler('cuda') 
+    
+    best_loss = float('inf') # Initialize best loss as infinity
 
     # Check if dataset exists
     dataset_path = "./data/VOCdevkit/VOC2007"
@@ -110,16 +114,29 @@ def main():
 
     for epoch in range(EPOCHS):
         print(f"\n--- Starting Epoch {epoch+1}/{EPOCHS} ---")
-        train_fn(train_loader, model, optimizer, loss_fn, scaler)
+        current_avg_loss = train_fn(train_loader, model, optimizer, loss_fn, scaler)
 
+        # SAVE BEST MODEL: If current epoch loss is the lowest so far
+        if current_avg_loss < best_loss:
+            best_loss = current_avg_loss
+            torch.save({
+                'epoch': epoch + 1,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': best_loss,
+            }, "yolo_best_model.pth")
+            print(f"==> New Best Model Saved with Loss: {best_loss:.4f}")
+
+        # Regular checkpoint every 10 epochs
         if (epoch + 1) % 10 == 0:
             checkpoint_name = f"yolov1_epoch_{epoch+1}.pth"
             torch.save({
                 'epoch': epoch + 1,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
+                'loss': current_avg_loss,
             }, checkpoint_name)
-            print(f"==> Model saved as {checkpoint_name}")
+            print(f"==> Checkpoint saved as {checkpoint_name}")
 
 if __name__ == "__main__":
     main()
