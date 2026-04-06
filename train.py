@@ -3,7 +3,6 @@ import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
-from torch.cuda.amp import GradScaler, autocast # For high-speed GPU training
 import os
 from model import YOLOv1
 from loss import YoloLoss
@@ -11,14 +10,14 @@ from loss import YoloLoss
 # Hyperparameters
 LEARNING_RATE = 2e-5 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-BATCH_SIZE = 64 # Increased for RTX 4500 with high VRAM
+BATCH_SIZE = 64 
 WEIGHT_DECAY = 0.0005 
 EPOCHS = 135 
 S = 7 
 B = 2 
 C = 20 
-NUM_WORKERS = 8 # Utilizing your high RAM/CPU cores
-PIN_MEMORY = True # Faster data transfer to GPU
+NUM_WORKERS = 16 
+PIN_MEMORY = True 
 
 # Image transformations
 transform = transforms.Compose([
@@ -56,8 +55,8 @@ def train_fn(train_loader, model, optimizer, loss_fn, scaler):
     for batch_idx, (x, y) in enumerate(train_loader):
         x, y = x.to(DEVICE), y.to(DEVICE)
 
-        # Using Mixed Precision for RTX 4500 Speedup
-        with autocast():
+        # Updated Autocast Syntax to avoid FutureWarning
+        with torch.amp.autocast('cuda'):
             predictions = model(x)
             loss = loss_fn(predictions, y)
 
@@ -65,7 +64,7 @@ def train_fn(train_loader, model, optimizer, loss_fn, scaler):
             continue
 
         optimizer.zero_grad()
-        scaler.scale(loss).backward() # Scaled backward
+        scaler.scale(loss).backward() 
         
         scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -83,7 +82,9 @@ def main():
     model = YOLOv1(split_size=S, num_boxes=B, num_classes=C).to(DEVICE)
     optimizer = optim.SGD(model.parameters(), lr=LEARNING_RATE, momentum=0.9, weight_decay=WEIGHT_DECAY)
     loss_fn = YoloLoss()
-    scaler = GradScaler() # Scaler for Mixed Precision
+    
+    # Updated GradScaler Syntax to avoid FutureWarning
+    scaler = torch.amp.GradScaler('cuda') 
 
     # Check if dataset exists
     dataset_path = "./data/VOCdevkit/VOC2007"
@@ -102,7 +103,7 @@ def main():
     train_loader = DataLoader(
         dataset=train_dataset, batch_size=BATCH_SIZE, shuffle=True,
         drop_last=True, collate_fn=voc_to_yolo_collate,
-        num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY # Performance boosts
+        num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY 
     )
 
     print(f"Starting training on {DEVICE} with High Performance settings...")
@@ -111,7 +112,6 @@ def main():
         print(f"\n--- Starting Epoch {epoch+1}/{EPOCHS} ---")
         train_fn(train_loader, model, optimizer, loss_fn, scaler)
 
-        # Save model every 10 epochs
         if (epoch + 1) % 10 == 0:
             checkpoint_name = f"yolov1_epoch_{epoch+1}.pth"
             torch.save({
