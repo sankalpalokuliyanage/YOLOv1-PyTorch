@@ -8,7 +8,8 @@ from model import YOLOv1
 from loss import YoloLoss
 
 # Hyperparameters
-LEARNING_RATE = 1e-6 # Fine-tuning learning rate as requested
+
+LEARNING_RATE = 5e-4 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH_SIZE = 64 
 WEIGHT_DECAY = 0.0005 
@@ -18,6 +19,12 @@ B = 2
 C = 20 
 NUM_WORKERS = 20 
 PIN_MEMORY = True 
+
+# VOC Class labels for correct indexing
+CLASSES = [
+    "aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow",
+    "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"
+]
 
 # Image transformations
 transform = transforms.Compose([
@@ -34,7 +41,10 @@ def voc_to_yolo_collate(batch):
         objs = anno['annotation']['object']
         if not isinstance(objs, list): objs = [objs]
         for obj in objs:
-            class_label = 0 
+        
+            class_name = obj['name']
+            class_label = CLASSES.index(class_name) 
+            
             bbox = obj['bndbox']
             xmin, ymin, xmax, ymax = float(bbox['xmin']), float(bbox['ymin']), float(bbox['xmax']), float(bbox['ymax'])
             orig_w, orig_h = float(anno['annotation']['size']['width']), float(anno['annotation']['size']['height'])
@@ -55,7 +65,6 @@ def train_fn(train_loader, model, optimizer, loss_fn, scaler):
     for batch_idx, (x, y) in enumerate(train_loader):
         x, y = x.to(DEVICE), y.to(DEVICE)
 
-        # Using modern torch.amp.autocast
         with torch.amp.autocast('cuda'):
             predictions = model(x)
             loss = loss_fn(predictions, y)
@@ -84,11 +93,9 @@ def main():
     model = YOLOv1(split_size=S, num_boxes=B, num_classes=C).to(DEVICE)
     optimizer = optim.SGD(model.parameters(), lr=LEARNING_RATE, momentum=0.9, weight_decay=WEIGHT_DECAY)
     loss_fn = YoloLoss()
-    
-    # Using modern torch.amp.GradScaler
     scaler = torch.amp.GradScaler('cuda') 
     
-    best_loss = float('inf') # Initialize best loss as infinity
+    best_loss = float('inf') 
 
     # Check if dataset exists
     dataset_path = "./data/VOCdevkit/VOC2007"
@@ -116,7 +123,7 @@ def main():
         print(f"\n--- Starting Epoch {epoch+1}/{EPOCHS} ---")
         current_avg_loss = train_fn(train_loader, model, optimizer, loss_fn, scaler)
 
-        # SAVE BEST MODEL: If current epoch loss is the lowest so far
+
         if current_avg_loss < best_loss:
             best_loss = current_avg_loss
             torch.save({
@@ -127,7 +134,6 @@ def main():
             }, "yolo_best_model.pth")
             print(f"==> New Best Model Saved with Loss: {best_loss:.4f}")
 
-        # Regular checkpoint every 10 epochs
         if (epoch + 1) % 10 == 0:
             checkpoint_name = f"yolov1_epoch_{epoch+1}.pth"
             torch.save({
