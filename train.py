@@ -1,63 +1,79 @@
 import torch
 import torch.optim as optim
-import torchvision
 import torchvision.transforms as transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 import os
+from PIL import Image
 from model import YOLOv1
 from loss import YoloLoss
 
-# Hyperparameters
-
-LEARNING_RATE = 5e-4 
+# 1. Hyperparameters
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-BATCH_SIZE = 64 
-WEIGHT_DECAY = 0.0005 
-EPOCHS = 135 
+BATCH_SIZE = 32 
+WEIGHT_DECAY = 0.0001 
+EPOCHS = 50 
 S = 7 
 B = 2 
-C = 20 
+C = 2 
 NUM_WORKERS = 20 
 PIN_MEMORY = True 
 
-# VOC Class labels for correct indexing
-CLASSES = [
-    "aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow",
-    "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"
-]
+
+LEARNING_RATE = 5e-4 
+
+CLASSES = ["dog", "cat"]
+
+# 2. Custom YOLO Dataset Class
+class CustomYOLODataset(Dataset):
+    def __init__(self, img_dir, label_dir, S=7, B=2, C=2, transform=None):
+        self.img_dir = img_dir
+        self.label_dir = label_dir
+        self.transform = transform
+        self.S = S
+        self.B = B
+        self.C = C
+        self.image_files = [f for f in os.listdir(img_dir) if f.lower().endswith(('.jpg', '.png', '.jpeg'))]
+
+    def __len__(self):
+        return len(self.image_files)
+
+    def __getitem__(self, index):
+        img_path = os.path.join(self.img_dir, self.image_files[index])
+        image = Image.open(img_path).convert("RGB")
+        
+        label_path = os.path.join(self.label_dir, os.path.splitext(self.image_files[index])[0] + ".txt")
+        boxes = []
+        if os.path.exists(label_path):
+            with open(label_path) as f:
+                for line in f.readlines():
+                    class_label, x, y, w, h = [float(val) for val in line.split()]
+                    boxes.append([class_label, x, y, w, h])
+
+        label_matrix = torch.zeros((self.S, self.S, self.C + 5 * self.B))
+        for box in boxes:
+            class_label, x, y, w, h = box
+            class_label = int(class_label)
+            
+            i, j = int(self.S * y), int(self.S * x)
+            x_cell, y_cell = self.S * x - j, self.S * y - i
+            
+            if label_matrix[i, j, self.C] == 0:
+                label_matrix[i, j, self.C] = 1 
+                label_matrix[i, j, self.C+1:self.C+5] = torch.tensor([x_cell, y_cell, w, h])
+                label_matrix[i, j, class_label] = 1 
+
+        if self.transform:
+            image = self.transform(image)
+
+        return image, label_matrix
 
 # Image transformations
 transform = transforms.Compose([
     transforms.Resize((448, 448)),
+    transforms.ColorJitter(brightness=0.2, contrast=0.2), 
+    transforms.RandomHorizontalFlip(p=0.5), 
     transforms.ToTensor(),
 ])
-
-def voc_to_yolo_collate(batch):
-    images = []
-    targets = []
-    for img, anno in batch:
-        images.append(img)
-        label_matrix = torch.zeros((S, S, C + 5 * B))
-        objs = anno['annotation']['object']
-        if not isinstance(objs, list): objs = [objs]
-        for obj in objs:
-        
-            class_name = obj['name']
-            class_label = CLASSES.index(class_name) 
-            
-            bbox = obj['bndbox']
-            xmin, ymin, xmax, ymax = float(bbox['xmin']), float(bbox['ymin']), float(bbox['xmax']), float(bbox['ymax'])
-            orig_w, orig_h = float(anno['annotation']['size']['width']), float(anno['annotation']['size']['height'])
-            x, y = (xmin + xmax) / (2 * orig_w), (ymin + ymax) / (2 * orig_h)
-            w, h = (xmax - xmin) / orig_w, (ymax - ymin) / orig_h
-            i, j = int(S * y), int(S * x)
-            x_cell, y_cell = S * x - j, S * y - i
-            if label_matrix[i, j, C] == 0:
-                label_matrix[i, j, C] = 1 
-                label_matrix[i, j, C+1:C+5] = torch.tensor([x_cell, y_cell, w, h])
-                label_matrix[i, j, class_label] = 1 
-        targets.append(label_matrix)
-    return torch.stack(images), torch.stack(targets)
 
 def train_fn(train_loader, model, optimizer, loss_fn, scaler):
     model.train()
@@ -70,79 +86,71 @@ def train_fn(train_loader, model, optimizer, loss_fn, scaler):
             loss = loss_fn(predictions, y)
 
         if torch.isnan(loss):
+            print("Warning: NaN loss detected! Skipping batch.")
             continue
 
         optimizer.zero_grad()
         scaler.scale(loss).backward() 
-        
         scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        
         scaler.step(optimizer)
         scaler.update()
 
         total_loss += loss.item()
-        if batch_idx % 10 == 0:
+        if batch_idx % 5 == 0:
             print(f"Batch {batch_idx}/{len(train_loader)}, Loss: {loss.item():.4f}")
 
     avg_loss = total_loss / len(train_loader)
-    print(f"Epoch finished. Average Loss: {avg_loss:.4f}")
+    print(f"Average Loss for Epoch: {avg_loss:.4f}")
     return avg_loss
 
 def main():
+    print(f"Initializing model on {DEVICE}...")
     model = YOLOv1(split_size=S, num_boxes=B, num_classes=C).to(DEVICE)
-    optimizer = optim.SGD(model.parameters(), lr=LEARNING_RATE, momentum=0.9, weight_decay=WEIGHT_DECAY)
-    loss_fn = YoloLoss()
-    scaler = torch.amp.GradScaler('cuda') 
     
-    best_loss = float('inf') 
+    
+    optimizer = optim.SGD(model.parameters(), lr=LEARNING_RATE, momentum=0.9, weight_decay=WEIGHT_DECAY)
+    loss_fn = YoloLoss(S=S, B=B, C=C)
+    scaler = torch.amp.GradScaler('cuda') 
 
-    # Check if dataset exists
-    dataset_path = "./data/VOCdevkit/VOC2007"
-    if os.path.exists(dataset_path):
-        print("Dataset found in the directory. Skipping download...")
-        download_required = False
-    else:
-        print("Dataset not found. Starting download...")
-        download_required = True
+    IMG_DIR = "data/images" 
+    LABEL_DIR = "data/labels"
 
-    train_dataset = torchvision.datasets.VOCDetection(
-        root="./data", year="2007", image_set="trainval", 
-        download=download_required, transform=transform
+    train_dataset = CustomYOLODataset(
+        img_dir=IMG_DIR, label_dir=LABEL_DIR, transform=transform, C=C
     )
 
     train_loader = DataLoader(
-        dataset=train_dataset, batch_size=BATCH_SIZE, shuffle=True,
-        drop_last=True, collate_fn=voc_to_yolo_collate,
-        num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY 
+        dataset=train_dataset, 
+        batch_size=BATCH_SIZE, 
+        shuffle=True,
+        num_workers=NUM_WORKERS, 
+        pin_memory=PIN_MEMORY 
     )
 
-    print(f"Starting training on {DEVICE} with High Performance settings...")
+    print(f"Starting Training for {EPOCHS} epochs with LR: {LEARNING_RATE}")
 
     for epoch in range(EPOCHS):
-        print(f"\n--- Starting Epoch {epoch+1}/{EPOCHS} ---")
-        current_avg_loss = train_fn(train_loader, model, optimizer, loss_fn, scaler)
+        print(f"\n--- Epoch {epoch+1}/{EPOCHS} ---")
+        train_fn(train_loader, model, optimizer, loss_fn, scaler)
 
-
-        if current_avg_loss < best_loss:
-            best_loss = current_avg_loss
-            torch.save({
-                'epoch': epoch + 1,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'loss': best_loss,
-            }, "yolo_best_model.pth")
-            print(f"==> New Best Model Saved with Loss: {best_loss:.4f}")
-
+        #
         if (epoch + 1) % 10 == 0:
-            checkpoint_name = f"yolov1_epoch_{epoch+1}.pth"
+            checkpoint_name = "final_yolo_model.pth"
             torch.save({
-                'epoch': epoch + 1,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'loss': current_avg_loss,
+                'epoch': epoch + 1,
             }, checkpoint_name)
-            print(f"==> Checkpoint saved as {checkpoint_name}")
+            print(f"==> Checkpoint saved: {checkpoint_name}")
+
+    print("\nInitial training complete. Saving final model...")
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'epoch': EPOCHS,
+    }, "final_yolo_model.pth")
+    print("==> Final Model Saved. You can now start fine-tuning with a lower LR.")
 
 if __name__ == "__main__":
     main()
