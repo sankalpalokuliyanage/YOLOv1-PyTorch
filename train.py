@@ -6,6 +6,7 @@ import os
 from PIL import Image
 from model import YOLOv1
 from loss import YoloLoss
+from huggingface_hub import snapshot_download 
 
 # 1. Hyperparameters
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -18,10 +19,24 @@ C = 2
 NUM_WORKERS = 20 
 PIN_MEMORY = True 
 
-
 LEARNING_RATE = 5e-4 
-
 CLASSES = ["dog", "cat"]
+
+def download_dataset():
+    repo_id = "sankalpa1998/cat-dog-yolo-dataset"
+    local_dir = "data"
+    
+    if not os.path.exists(os.path.join(local_dir, "labels")):
+        print(f"Downloading dataset from Hugging Face: {repo_id}...")
+        snapshot_download(
+            repo_id=repo_id,
+            repo_type="dataset",
+            local_dir=local_dir,
+            local_dir_use_symlinks=False
+        )
+        print("Download complete.")
+    else:
+        print("Dataset already exists locally. Skipping download.")
 
 # 2. Custom YOLO Dataset Class
 class CustomYOLODataset(Dataset):
@@ -105,14 +120,16 @@ def train_fn(train_loader, model, optimizer, loss_fn, scaler):
     return avg_loss
 
 def main():
+    download_dataset()
+
     print(f"Initializing model on {DEVICE}...")
     model = YOLOv1(split_size=S, num_boxes=B, num_classes=C).to(DEVICE)
-    
     
     optimizer = optim.SGD(model.parameters(), lr=LEARNING_RATE, momentum=0.9, weight_decay=WEIGHT_DECAY)
     loss_fn = YoloLoss(S=S, B=B, C=C)
     scaler = torch.amp.GradScaler('cuda') 
 
+   
     IMG_DIR = "data/images" 
     LABEL_DIR = "data/labels"
 
@@ -134,7 +151,6 @@ def main():
         print(f"\n--- Epoch {epoch+1}/{EPOCHS} ---")
         train_fn(train_loader, model, optimizer, loss_fn, scaler)
 
-        #
         if (epoch + 1) % 10 == 0:
             checkpoint_name = "final_yolo_model.pth"
             torch.save({
